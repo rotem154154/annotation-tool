@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Image Preference Survey</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet"
+        href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>Which version looks better?</h1>
+  </header>
+
+  <!-- Name field -->
+  <section class="name-box">
+    <label for="user-name">Your name:</label>
+    <input id="user-name" type="text" maxlength="40" autocomplete="off">
+  </section>
+
+  <main id="container">
+    <div id="images" class="image-row">
+      <img id="img-left"  alt="Left">
+      <img id="img-right" alt="Right">
+    </div>
+
+    <div class="controls">
+      <div class="controls-left">
+        <button id="btn-left" class="pick">Left&nbsp;(←)</button>
+      </div>
+    
+      <div class="controls-middle">
+        <button id="btn-good" class="pick good">Both&nbsp;good&nbsp;(↑)</button>
+        <button id="btn-bad"  class="pick bad" >Both&nbsp;bad&nbsp;(↓)</button>
+      </div>
+    
+      <div class="controls-right">
+        <button id="btn-right" class="pick">Right&nbsp;(→)</button>
+      </div>
+    </div>
+
+    <div id="feedback" class="feedback"></div>
+  </main>
+
+  <!-- Leaderboard -->
+  <section class="leaderboard">
+    <h2>Leaderboard</h2>
+    <ol id="leaderboard-list"></ol>
+  </section>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

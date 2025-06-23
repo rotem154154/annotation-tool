@@ -1,0 +1,112 @@
+/* ---------- Layout basics ---------- */
+body{
+  font-family:sans-serif;
+  margin:0;padding:0;
+  display:flex;flex-direction:column;min-height:100vh;
+}
+header{background:#f0f0f0;text-align:center;padding:0.5em 0;}
+main{flex:1;display:flex;flex-direction:column;align-items:center}
+
+/* ---------- Name box ---------- */
+.name-box{margin:0.5em auto 0.3em;text-align:center}
+.name-box input{font-size:1rem;padding:0.2em 0.4em}
+
+/* ---------- Images ---------- */
+.image-row{
+  display:flex;justify-content:center;align-items:center;
+  width:100%;max-width:100vw;
+}
+.image-row img{
+  max-width:49vw;height:auto;object-fit:contain;
+  background:#000;cursor:pointer;
+  border:2px solid #666;box-sizing:border-box;
+}
+
+/* ---------- Buttons ---------- */
+.controls{margin:1em 0;display:flex;gap:1rem}
+button.pick{
+  font-size:1.1rem;padding:0.6em 1.2em;border:none;
+  border-radius:6px;cursor:pointer;
+}
+button.bad{background:#f66;color:#fff}
+
+/* ---------- Feedback ---------- */
+.feedback{
+  text-align:center;font-size:1.2rem;
+  margin-top:0.5em;min-height:1.5em;font-weight:bold;
+}
+
+/* ---------- Leaderboard ---------- */
+.leaderboard{
+  width:100%;max-width:420px;margin:1.2em auto 1em;
+  background:#fafafa;border:1px solid #ddd;border-radius:8px;
+  padding:0.6em 1.2em;
+}
+.leaderboard h2{
+  margin:0 0 0.4em;text-align:center;font-size:1.1rem;
+}
+.leaderboard ol{margin:0;padding-left:1.2em}
+.leaderboard li{margin:0.15em 0}
+
+/* ---------- Portrait adjustments ---------- */
+@media (orientation:portrait){
+  .image-row{flex-direction:column}
+  .image-row img{
+    max-width:100vw;max-height:42vh;
+    border-left:none;border-right:none;
+    border-bottom:2px solid #666;
+  }
+  .image-row img:last-child{border-bottom:none}
+
+  /* hide Left/Right buttons */
+  #btn-left,#btn-right{display:none}
+  .controls{justify-content:center}
+}
+
+/* Buttons: colour tweak for the “good” button */
+button.good   { background:#4caf50; color:#fff; }   /* green */
+
+/* Nice 2-row layout on wide screens */
+.controls{
+  display:grid;
+  grid-template-columns:repeat(2,auto);
+  gap:0.6rem 1.2rem;        /* row gap, column gap */
+  margin:1rem 0;
+  justify-content:center;
+}
+
+/* Portrait keeps one row (only “Both” buttons visible) */
+@media (orientation:portrait){
+  .controls{
+    display:flex;
+    gap:1rem;
+    justify-content:center;
+  }
+  #btn-left,#btn-right{ display:none; }
+}
+
+/* … keep everything above unchanged … */
+
+/* ---------- Control buttons ---------- */
+.controls{
+  display:grid;
+  grid-template-columns: 1fr 1fr 1fr;   /* left | middle | right */
+  column-gap:1.2rem; row-gap:0.6rem;
+  margin:1rem 0; align-items:center;
+}
+.controls-left   { justify-self:end;  }
+.controls-middle { justify-self:center; }
+.controls-right  { justify-self:start; }
+
+button.pick{
+  font-size:1.05rem;padding:0.5em 1.2em;
+  border:none;border-radius:6px;cursor:pointer;
+}
+button.bad  { background:#e55;color:#fff;}
+button.good { background:#4caf50;color:#fff;}
+
+/* Portrait – hide L/R buttons but keep centre pair */
+@media (orientation:portrait){
+  #btn-left,#btn-right{display:none;}
+  .controls{grid-template-columns:1fr;}
+}

@@ -1,0 +1,149 @@
+import json, random, time, uuid, re
+from datetime import datetime
+from pathlib import Path
+from filelock import FileLock
+import re
+from flask import (
+    Flask, jsonify, make_response, render_template,
+    request, send_from_directory
+)
+
+# ── Config ──────────────────────────────────────────────────── #
+IMAGE_ROOT   = Path("static/images")
+DATA_PATH    = Path("votes.jsonl")      # NEW: json lines file
+LOCK_PATH    = DATA_PATH.with_suffix(".lock")
+COOKIE_ID    = "client_id"
+COOKIE_NAME  = "user_name"
+IMG_EXT      = ".png"
+TOP_N        = 10
+NAME_RX = re.compile(r'^[^\s\0-\x1F\x7F]{1,40}$')
+USERAGENT_RX = re.compile(r"^Mozilla\/", re.I)
+# ───────────────────────────────────────────────────────────── #
+
+app = Flask(__name__)
+
+# ── Image folder scan (skip hidden) ─────────────────────────── #
+folders = [p for p in IMAGE_ROOT.iterdir()
+           if p.is_dir() and not p.name.startswith(".")]
+if len(folders) < 2:
+    raise RuntimeError("Need at least two image folders in static/images.")
+
+image_ids = sorted(f.stem for f in folders[0].iterdir()
+                   if f.is_file() and f.suffix.lower() == IMG_EXT)
+
+def random_pair():
+    left, right = random.sample(folders, 2)
+    img = random.choice(image_ids)
+    if random.random() < .5:
+        left, right = right, left
+    return img, left.name, right.name
+
+# ── In-memory leaderboard built from JSONL (if exists) ──────── #
+scores: dict[str, int] = {}
+if DATA_PATH.exists():
+    with open(DATA_PATH, encoding='utf-8') as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+                name = rec.get("user_name", "anonymous")
+                if USERAGENT_RX.match(name):   # ignore corrupted UA names
+                    name = "anonymous"
+                scores[name] = scores.get(name, 0) + 1
+            except Exception:
+                continue   # skip bad lines
+
+def set_cookie(resp, key, val):
+    resp.set_cookie(key, val,
+                    max_age=60*60*24*365*2,
+                    httponly=False,
+                    samesite="Lax")
+
+# ── Routes ──────────────────────────────────────────────────── #
+@app.route("/")
+def index():
+    resp = make_response(render_template("index.html"))
+    if not request.cookies.get(COOKIE_ID):
+        set_cookie(resp, COOKIE_ID, uuid.uuid4().hex)
+    if not request.cookies.get(COOKIE_NAME):
+        set_cookie(resp, COOKIE_NAME, "anonymous")
+    return resp
+
+@app.route("/api/next")
+def api_next():
+    img, left, right = random_pair()
+    token = str(int(time.time()*1000))
+    return jsonify({
+        "image_id": img,
+        "left_url":  f"/static/images/{left}/{img}{IMG_EXT}?v={token}",
+        "right_url": f"/static/images/{right}/{img}{IMG_EXT}?v={token}",
+        "left_folder": left,
+        "right_folder": right
+    })
+
+@app.route("/api/name", methods=["GET", "POST"])
+def api_name():
+    if request.method == "POST":
+        name = request.get_json(force=True).get("name", "anonymous").strip()[:40]
+        if not NAME_RX.match(name):     # basic sanitisation
+            name = "anonymous"
+        resp = jsonify({"status": "ok", "name": name})
+        set_cookie(resp, COOKIE_NAME, name)
+        return resp
+    return jsonify({"name": request.cookies.get(COOKIE_NAME, "anonymous")})
+
+@app.route("/api/leaderboard")
+def api_leaderboard():
+    top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:TOP_N]
+    return jsonify(top)
+
+@app.route("/api/vote", methods=["POST"])
+def api_vote():
+    data = request.get_json(force=True)
+
+    # Compute winner/loser folders
+    if data["winner"] in ("both_bad", "both_good"):
+        winner_folder = loser_folder = data["winner"]
+    elif data["winner_side"] == "left":
+        winner_folder, loser_folder = data["left_folder"], data["right_folder"]
+    else:
+        winner_folder, loser_folder = data["right_folder"], data["left_folder"]
+
+    user_name = request.cookies.get(COOKIE_NAME, "anonymous")
+    if USERAGENT_RX.match(user_name):   # extra defence
+        user_name = "anonymous"
+
+    record = {
+        "timestamp_iso": datetime.utcnow().isoformat(),
+        "user_name": user_name,
+        "client_id": request.cookies.get(COOKIE_ID, ""),
+        "image_id": data["image_id"],
+        "winner_folder": winner_folder,
+        "loser_folder":  loser_folder,
+        "left_folder":   data["left_folder"],
+        "right_folder":  data["right_folder"],
+        "winner_side":   data["winner_side"],
+        "decision_ms":   data["decision_ms"],
+        "orientation":   data.get("orientation",""),
+        "load_ms":       data.get("load_ms",""),
+        "input_method":  data.get("input_method",""),
+        "hover_left_ms": data.get("hover_left_ms",""),
+        "hover_right_ms":data.get("hover_right_ms",""),
+        "resolution":    data.get("resolution",""),
+        "remote_addr":   request.headers.get("X-Forwarded-For",
+                                             request.remote_addr),
+        "user_agent":    request.headers.get("User-Agent",""),
+    }
+
+    with FileLock(str(LOCK_PATH)):
+        with open(DATA_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    scores[user_name] = scores.get(user_name, 0) + 1
+    return {"status": "ok"}
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory('static', 'favicon.ico')
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=8000)
