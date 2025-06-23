@@ -18,20 +18,45 @@ IMG_EXT      = ".png"
 TOP_N        = 10
 NAME_RX = re.compile(r'^[^\s\0-\x1F\x7F]{1,40}$')
 USERAGENT_RX = re.compile(r"^Mozilla\/", re.I)
-# ───────────────────────────────────────────────────────────── #
+
+# NEW: root for 4-way variation task (outside static)
+VAR_IMAGE_ROOT = Path.home() / "datasets/image_variations"
+VAR_FOLDERS    = [p for p in VAR_IMAGE_ROOT.iterdir() if p.is_dir() and p.name.startswith("variation_")]
+if len(VAR_FOLDERS) != 4:
+    raise RuntimeError("Expected exactly 4 variation_* folders under ~/datasets/image_variations")
+VAR_FOLDERS.sort(key=lambda p: p.name)  # make order deterministic
+
+# Build list of image ids (stem) from first variation folder
+VAR_IMAGE_IDS: list[str] = sorted(
+    f.stem for f in VAR_FOLDERS[0].iterdir()
+    if f.is_file() and f.suffix.lower() == IMG_EXT
+)
+
+# Where we persist the votes for 4-way task
+VAR_DATA_PATH = Path("variation_votes.jsonl")
+VAR_LOCK_PATH = VAR_DATA_PATH.with_suffix(".lock")
 
 app = Flask(__name__)
 
 # ── Image folder scan (skip hidden) ─────────────────────────── #
-folders = [p for p in IMAGE_ROOT.iterdir()
-           if p.is_dir() and not p.name.startswith(".")]
-if len(folders) < 2:
-    raise RuntimeError("Need at least two image folders in static/images.")
+try:
+    folders = [p for p in IMAGE_ROOT.iterdir()
+               if p.is_dir() and not p.name.startswith(".")]
+except FileNotFoundError:
+    folders = []  # directory missing
 
-image_ids = sorted(f.stem for f in folders[0].iterdir()
-                   if f.is_file() and f.suffix.lower() == IMG_EXT)
+PAIRWISE_ENABLED = len(folders) >= 2
+if not PAIRWISE_ENABLED:
+    print("[WARN] Pairwise comparison disabled – 'static/images' missing or insufficient folders")
+    folders = []
+    image_ids = []
+else:
+    image_ids = sorted(f.stem for f in folders[0].iterdir()
+                       if f.is_file() and f.suffix.lower() == IMG_EXT)
 
 def random_pair():
+    if not PAIRWISE_ENABLED:
+        raise RuntimeError("Pairwise comparison feature not enabled")
     left, right = random.sample(folders, 2)
     img = random.choice(image_ids)
     if random.random() < .5:
@@ -61,15 +86,13 @@ def set_cookie(resp, key, val):
 # ── Routes ──────────────────────────────────────────────────── #
 @app.route("/")
 def index():
-    resp = make_response(render_template("index.html"))
-    if not request.cookies.get(COOKIE_ID):
-        set_cookie(resp, COOKIE_ID, uuid.uuid4().hex)
-    if not request.cookies.get(COOKIE_NAME):
-        set_cookie(resp, COOKIE_NAME, "anonymous")
-    return resp
+    """Default page – serve the variations task."""
+    return variations_page()
 
 @app.route("/api/next")
 def api_next():
+    if not PAIRWISE_ENABLED:
+        return jsonify({"error":"pairwise_disabled"}), 404
     img, left, right = random_pair()
     token = str(int(time.time()*1000))
     return jsonify({
@@ -140,6 +163,67 @@ def api_vote():
 
     scores[user_name] = scores.get(user_name, 0) + 1
     return {"status": "ok"}
+
+@app.route("/variations")
+def variations_page():
+    """Render the 4-way variation selection page."""
+    resp = make_response(render_template("variations.html"))
+    if not request.cookies.get(COOKIE_ID):
+        set_cookie(resp, COOKIE_ID, uuid.uuid4().hex)
+    if not request.cookies.get(COOKIE_NAME):
+        set_cookie(resp, COOKIE_NAME, "anonymous")
+    return resp
+
+@app.route("/api/variations/next")
+def api_variations_next():
+    """Return JSON describing the next set of 4 variation images."""
+    img = random.choice(VAR_IMAGE_IDS)
+    token = str(int(time.time()*1000))
+    urls = [f"/variation_images/{folder.name}/{img}{IMG_EXT}?v={token}"
+            for folder in VAR_FOLDERS]
+    return jsonify({
+        "image_id": img,
+        "variation_urls": urls,
+        "variation_names": [f.name for f in VAR_FOLDERS]
+    })
+
+@app.route("/api/variations/vote", methods=["POST"])
+def api_variations_vote():
+    """Persist a vote for the best variation among the four."""
+    data = request.get_json(force=True)
+
+    user_name = request.cookies.get(COOKIE_NAME, "anonymous")
+    if USERAGENT_RX.match(user_name):
+        user_name = "anonymous"
+
+    record = {
+        "timestamp_iso": datetime.utcnow().isoformat(),
+        "user_name": user_name,
+        "client_id": request.cookies.get(COOKIE_ID, ""),
+        "image_id": data["image_id"],
+        "winner_variation": data["winner_variation"],  # e.g. variation_2
+        "winner_index": data.get("winner_index"),       # 0..3
+        "decision_ms": data.get("decision_ms"),
+        "orientation": data.get("orientation", ""),
+        "resolution": data.get("resolution", ""),
+        "remote_addr": request.headers.get("X-Forwarded-For", request.remote_addr),
+        "user_agent": request.headers.get("User-Agent", ""),
+    }
+
+    with FileLock(str(VAR_LOCK_PATH)):
+        with open(VAR_DATA_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return {"status": "ok"}
+
+@app.route("/variation_images/<variation>/<path:filename>")
+def variation_images(variation: str, filename: str):
+    """Serve images from the external variation datasets."""
+    # Basic safety check
+    if variation not in {p.name for p in VAR_FOLDERS}:
+        return "Not found", 404
+    dir_path = VAR_IMAGE_ROOT / variation
+    return send_from_directory(dir_path, filename)
 
 @app.route('/favicon.ico')
 def favicon():

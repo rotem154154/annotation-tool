@@ -3,6 +3,7 @@ body{
   font-family:sans-serif;
   margin:0;padding:0;
   display:flex;flex-direction:column;min-height:100vh;
+  overflow:hidden;
 }
 header{background:#f0f0f0;text-align:center;padding:0.5em 0;}
 main{flex:1;display:flex;flex-direction:column;align-items:center}
@@ -63,7 +64,7 @@ button.bad{background:#f66;color:#fff}
   .controls{justify-content:center}
 }
 
-/* Buttons: colour tweak for the “good” button */
+/* Buttons: colour tweak for the "good" button */
 button.good   { background:#4caf50; color:#fff; }   /* green */
 
 /* Nice 2-row layout on wide screens */
@@ -75,7 +76,7 @@ button.good   { background:#4caf50; color:#fff; }   /* green */
   justify-content:center;
 }
 
-/* Portrait keeps one row (only “Both” buttons visible) */
+/* Portrait keeps one row (only "Both" buttons visible) */
 @media (orientation:portrait){
   .controls{
     display:flex;
@@ -109,4 +110,40 @@ button.good { background:#4caf50;color:#fff;}
 @media (orientation:portrait){
   #btn-left,#btn-right{display:none;}
   .controls{grid-template-columns:1fr;}
+}
+
+/* ---------- 4-way variation grid ---------- */
+.grid4{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1rem;
+  max-width:90vw;
+  margin:1em auto;
+  justify-items:center;
+  margin-bottom:6rem;
+}
+.grid4 img{
+  width:100%;height:auto;object-fit:contain;
+  border:2px solid #666;box-sizing:border-box;
+  cursor:pointer;
+  background:#000;
+  transition:transform 0.2s,opacity 0.2s,border-color 0.2s;
+}
+.grid4 img:hover{transform:scale(1.05);}
+.grid4 img.selected{border-color:#4caf50;transform:scale(1.08);}
+.grid4 img.faded{opacity:0.25;}
+
+/* Variation page single control alignment */
+.controls:has(#btn-all-bad){
+  display:flex;
+  justify-content:center;
+}
+
+/* All-bad button pinned to bottom centre */
+#btn-all-bad{
+  position:fixed;
+  bottom:1.2rem;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:1000;
 }

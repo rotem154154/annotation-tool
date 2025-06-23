@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Choose the Best Variation</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <main>
+    <div id="variation-grid" class="grid4">
+      <img id="var-0" data-index="0" alt="Variation 1">
+      <img id="var-1" data-index="1" alt="Variation 2">
+      <img id="var-2" data-index="2" alt="Variation 3">
+      <img id="var-3" data-index="3" alt="Variation 4">
+    </div>
+    <div class="controls">
+      <button id="btn-all-bad" class="pick bad">All&nbsp;bad</button>
+    </div>
+    <div id="var-feedback" class="feedback"></div>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/variations.js') }}"></script>
+</body>
+</html> 
