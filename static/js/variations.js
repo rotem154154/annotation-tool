@@ -41,10 +41,24 @@ async function showNext(){
   current   = await prefetchP;
   prefetchP = prefetchSet();
 
+  // Shuffle the order of variations for random grid placement
+  const shuffled = current.variation_urls.map((url, i) => ({
+    url: url,
+    name: current.variation_names[i],
+    originalIndex: i
+  }));
+  
+  // Fisher-Yates shuffle
+  for(let i = shuffled.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
   imgs.forEach((imgEl,i)=>{
     imgEl.className = "";             // reset classes
-    imgEl.src = current.variation_urls[i];
-    imgEl.dataset.variation = current.variation_names[i];
+    imgEl.src = shuffled[i].url;
+    imgEl.dataset.variation = shuffled[i].name;
+    imgEl.dataset.originalIndex = shuffled[i].originalIndex;
   });
   fbBox.textContent = "";
   tStart = performance.now();
@@ -61,10 +75,12 @@ async function vote(index){
   });
 
   const decision_ms = Math.round(performance.now()-tStart);
+  const clickedImg = imgs[index];
   const body = {
     image_id:          current.image_id,
-    winner_variation:  current.variation_names[index],
-    winner_index:      index,
+    winner_variation:  clickedImg.dataset.variation,
+    winner_index:      parseInt(clickedImg.dataset.originalIndex),
+    grid_position:     index,  // position in the shuffled grid
     decision_ms,
     orientation: matchMedia("(orientation: portrait)").matches ?
                  "portrait":"landscape",
@@ -79,7 +95,7 @@ async function vote(index){
   });
 
   /* text feedback */
-  fbBox.textContent = `You picked ${current.variation_names[index]}`;
+  fbBox.textContent = `You picked ${clickedImg.dataset.variation}`;
 
   // Wait a short moment for animation then advance
   setTimeout(showNext, 400);
@@ -119,6 +135,14 @@ imgs.forEach((imgEl,i)=>{
 });
 
 btnAllBad.addEventListener("click",voteAllBad);
+
+/* Keyboard handler */
+window.addEventListener("keydown",e=>{
+  if(e.key===" " || e.code==="Space"){
+    e.preventDefault(); // prevent page scroll
+    voteAllBad();
+  }
+});
 
 /* ------------------- Kick-off ------------------ */
 prefetchP = prefetchSet();
