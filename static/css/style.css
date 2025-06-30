@@ -149,3 +149,13 @@ button.good { background:#4caf50;color:#fff;}
   font-size:1.3rem;
   padding:0.8em 2em;
 }
+
+/* Highlight & fade for two-image comparison */
+.image-row img.selected{
+  border-color:#4caf50;
+  transform:scale(1.05);
+  transition:transform 0.2s,border-color 0.2s;
+}
+.image-row img.faded{
+  opacity:0.25;
+}

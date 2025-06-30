@@ -7,19 +7,35 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+  <header>
+    <h1>Which variation looks better?</h1>
+  </header>
+
   <main>
-    <div id="variation-grid" class="grid4">
-      <img id="var-0" data-index="0" alt="Variation 1">
-      <img id="var-1" data-index="1" alt="Variation 2">
-      <img id="var-2" data-index="2" alt="Variation 3">
-      <img id="var-3" data-index="3" alt="Variation 4">
+    <!-- Two-image row -->
+    <div id="image-row" class="image-row">
+      <img id="img-left"  alt="Left variation">
+      <img id="img-right" alt="Right variation">
     </div>
+
+    <!-- Control buttons -->
     <div class="controls">
-      <button id="btn-all-bad" class="pick bad">All&nbsp;bad&nbsp;(Space)</button>
+      <div class="controls-left">
+        <button id="btn-left"  class="pick">Left&nbsp;(←)</button>
+      </div>
+      <div class="controls-middle">
+        <button id="btn-good" class="pick good">Both&nbsp;good&nbsp;(↑)</button>
+        <button id="btn-bad"  class="pick bad" >Both&nbsp;bad&nbsp;(↓)</button>
+      </div>
+      <div class="controls-right">
+        <button id="btn-right" class="pick">Right&nbsp;(→)</button>
+      </div>
     </div>
+
+    <!-- Feedback text -->
     <div id="var-feedback" class="feedback"></div>
   </main>
 
-  <script src="{{ url_for('static', filename='js/variations.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/variation_pair.js') }}"></script>
 </body>
 </html> 

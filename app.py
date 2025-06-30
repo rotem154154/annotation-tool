@@ -21,10 +21,16 @@ USERAGENT_RX = re.compile(r"^Mozilla\/", re.I)
 
 # NEW: root for 4-way variation task (outside static)
 VAR_IMAGE_ROOT = Path.home() / "datasets/image_variations"
-VAR_FOLDERS    = [p for p in VAR_IMAGE_ROOT.iterdir() if p.is_dir() and p.name.startswith("variation_")]
-if len(VAR_FOLDERS) != 4:
-    raise RuntimeError("Expected exactly 4 variation_* folders under ~/datasets/image_variations")
-VAR_FOLDERS.sort(key=lambda p: p.name)  # make order deterministic
+CLAUDE_FOLDER  = VAR_IMAGE_ROOT / "claude"
+if not CLAUDE_FOLDER.exists():
+    raise RuntimeError("Folder 'claude' must exist under ~/datasets/image_variations")
+
+# Load all other variation_* folders (exclude claude)
+VAR_FOLDERS = [p for p in VAR_IMAGE_ROOT.iterdir()
+               if p.is_dir() and p.name.startswith("variation_")]
+if len(VAR_FOLDERS) < 1:
+    raise RuntimeError("Need at least one 'variation_*' folder in addition to 'claude'")
+VAR_FOLDERS.sort(key=lambda p: p.name)
 
 # Build list of image ids (stem) from first variation folder
 VAR_IMAGE_IDS: list[str] = sorted(
@@ -176,51 +182,80 @@ def variations_page():
 
 @app.route("/api/variations/next")
 def api_variations_next():
-    """Return JSON describing the next set of 4 variation images."""
+    """Return JSON with a Claude image paired with a random variation image."""
     img = random.choice(VAR_IMAGE_IDS)
     token = str(int(time.time()*1000))
-    urls = [f"/variation_images/{folder.name}/{img}{IMG_EXT}?v={token}"
-            for folder in VAR_FOLDERS]
+
+    other_var = random.choice(VAR_FOLDERS)
+
+    # start with Claude left, other right then maybe flip
+    left_var_path, right_var_path = CLAUDE_FOLDER, other_var
+
+    if random.random() < 0.5:
+        left_var_path, right_var_path = right_var_path, left_var_path
+
     return jsonify({
         "image_id": img,
-        "variation_urls": urls,
-        "variation_names": [f.name for f in VAR_FOLDERS]
+        "left_url":  f"/variation_images/{left_var_path.name}/{img}{IMG_EXT}?v={token}",
+        "right_url": f"/variation_images/{right_var_path.name}/{img}{IMG_EXT}?v={token}",
+        "left_variation":  left_var_path.name,
+        "right_variation": right_var_path.name
     })
 
 @app.route("/api/variations/vote", methods=["POST"])
 def api_variations_vote():
-    """Persist a vote for the best variation among the four."""
+    """Persist a vote for the best variation (pair-wise)."""
     data = request.get_json(force=True)
 
     user_name = request.cookies.get(COOKIE_NAME, "anonymous")
     if USERAGENT_RX.match(user_name):
         user_name = "anonymous"
 
+    # Determine winner & loser variations based on choice
+    choice = data.get("winner_choice")
+    left_var  = data.get("left_variation")
+    right_var = data.get("right_variation")
+    if choice == "left":
+        winner_var, loser_var = left_var, right_var
+    elif choice == "right":
+        winner_var, loser_var = right_var, left_var
+    elif choice in ("both_good", "both_bad"):
+        winner_var = loser_var = choice  # symmetrical outcome
+    else:  # skip or unknown
+        winner_var = loser_var = "skip"
+
     record = {
         "timestamp_iso": datetime.utcnow().isoformat(),
         "user_name": user_name,
         "client_id": request.cookies.get(COOKIE_ID, ""),
-        "image_id": data["image_id"],
-        "winner_variation": data["winner_variation"],  # e.g. variation_2
-        "winner_index": data.get("winner_index"),       # 0..3
-        "decision_ms": data.get("decision_ms"),
-        "orientation": data.get("orientation", ""),
-        "resolution": data.get("resolution", ""),
-        "remote_addr": request.headers.get("X-Forwarded-For", request.remote_addr),
-        "user_agent": request.headers.get("User-Agent", ""),
+        "image_id": data.get("image_id"),
+        "winner_variation": winner_var,
+        "loser_variation":  loser_var,
+        "left_variation":   left_var,
+        "right_variation":  right_var,
+        "winner_choice":    choice,
+        "decision_ms":      data.get("decision_ms"),
+        "orientation":      data.get("orientation", ""),
+        "resolution":       data.get("resolution", ""),
+        "remote_addr":      request.headers.get("X-Forwarded-For", request.remote_addr),
+        "user_agent":       request.headers.get("User-Agent", ""),
     }
 
-    with FileLock(str(VAR_LOCK_PATH)):
-        with open(VAR_DATA_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    # Skip votes are not persisted
+    if choice != "skip":
+        with FileLock(str(VAR_LOCK_PATH)):
+            with open(VAR_DATA_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     return {"status": "ok"}
 
 @app.route("/variation_images/<variation>/<path:filename>")
 def variation_images(variation: str, filename: str):
     """Serve images from the external variation datasets."""
-    # Basic safety check
-    if variation not in {p.name for p in VAR_FOLDERS}:
+    # Basic safety check – allow 'claude' plus variation_* folders
+    allowed = {p.name for p in VAR_FOLDERS}
+    allowed.add(CLAUDE_FOLDER.name)
+    if variation not in allowed:
         return "Not found", 404
     dir_path = VAR_IMAGE_ROOT / variation
     return send_from_directory(dir_path, filename)
