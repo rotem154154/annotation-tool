@@ -18,7 +18,7 @@ const fbBox = document.getElementById("var-feedback");
 /* ------------------- State --------------------- */
 let prefetchP = null;    // Promise with next pair
 let current   = null;    // currently shown pair (meta)
-let tStart    = 0;       // perf.now when pair displayed
+let tStart    = 0;       // performance marker (still used for potential extensions)
 
 /* ------------------- Prefetch ------------------ */
 async function prefetchPair(){
@@ -67,19 +67,14 @@ async function vote(choice){
     imgR.classList.add("selected");
   }
 
-  const decision_ms = Math.round(performance.now()-tStart);
-  const orient = matchMedia("(orientation: portrait)").matches ?
-                 "portrait" : "landscape";
-
   // Build payload
   const body = {
     image_id: current.image_id,
+    left_model:      current.left_model,
     left_variation:  current.left_variation,
+    right_model:     current.right_model,
     right_variation: current.right_variation,
-    winner_choice: choice,   // left/right/both_good/both_bad
-    decision_ms,
-    orientation: orient,
-    resolution: `${innerWidth}x${innerHeight}`
+    winner:          choice
   };
 
   // Only send if not skip
@@ -95,8 +90,8 @@ async function vote(choice){
   if(choice!=="skip"){
     let msg="";
     switch(choice){
-      case "left": msg = `You picked ${current.left_variation}`; break;
-      case "right": msg = `You picked ${current.right_variation}`; break;
+      case "left": msg = `You picked ${current.left_model}/${current.left_variation}`; break;
+      case "right": msg = `You picked ${current.right_model}/${current.right_variation}`; break;
       case "both_good": msg = "You marked both good"; break;
       case "both_bad": msg = "You marked both bad"; break;
     }

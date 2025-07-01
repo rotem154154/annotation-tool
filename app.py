@@ -19,28 +19,49 @@ TOP_N        = 10
 NAME_RX = re.compile(r'^[^\s\0-\x1F\x7F]{1,40}$')
 USERAGENT_RX = re.compile(r"^Mozilla\/", re.I)
 
-# NEW: root for 4-way variation task (outside static)
+# NEW: root for multi-model variation task
 VAR_IMAGE_ROOT = Path.home() / "datasets/image_variations"
-CLAUDE_FOLDER  = VAR_IMAGE_ROOT / "claude"
-if not CLAUDE_FOLDER.exists():
-    raise RuntimeError("Folder 'claude' must exist under ~/datasets/image_variations")
 
-# Load all other variation_* folders (exclude claude)
-VAR_FOLDERS = [p for p in VAR_IMAGE_ROOT.iterdir()
-               if p.is_dir() and p.name.startswith("variation_")]
-if len(VAR_FOLDERS) < 1:
-    raise RuntimeError("Need at least one 'variation_*' folder in addition to 'claude'")
-VAR_FOLDERS.sort(key=lambda p: p.name)
+# --------------- Model discovery --------------- #
+MODEL_DIRS = [p for p in VAR_IMAGE_ROOT.iterdir() if p.is_dir()]
+if len(MODEL_DIRS) < 2:
+    raise RuntimeError("Need at least two model folders under ~/datasets/image_variations")
 
-# Build list of image ids (stem) from first variation folder
+# Map model name -> list[Path] of variation folders
+MODEL_VARIATIONS: dict[str, list[Path]] = {}
+for model_dir in MODEL_DIRS:
+    v_folders = [vf for vf in model_dir.iterdir()
+                 if vf.is_dir() and vf.name.startswith("variation_")]
+    if not v_folders:
+        print(f"[WARN] Model '{model_dir.name}' has no variation_* folders – skipped")
+        continue
+    v_folders.sort(key=lambda p: p.name)
+    MODEL_VARIATIONS[model_dir.name] = v_folders
+
+if len(MODEL_VARIATIONS) < 2:
+    raise RuntimeError("Need at least two models with variation_* folders")
+
+# Build global list of image IDs (use first model's first variation folder)
+FIRST_MODEL = next(iter(MODEL_VARIATIONS))
+FIRST_VAR_FOLDER = MODEL_VARIATIONS[FIRST_MODEL][0]
 VAR_IMAGE_IDS: list[str] = sorted(
-    f.stem for f in VAR_FOLDERS[0].iterdir()
+    f.stem for f in FIRST_VAR_FOLDER.iterdir()
     if f.is_file() and f.suffix.lower() == IMG_EXT
 )
 
-# Where we persist the votes for 4-way task
 VAR_DATA_PATH = Path("variation_votes.jsonl")
 VAR_LOCK_PATH = VAR_DATA_PATH.with_suffix(".lock")
+
+# Build per-model image ID sets (across all its variation folders)
+MODEL_IMAGE_IDS: dict[str, set[str]] = {}
+for model, var_dirs in MODEL_VARIATIONS.items():
+    ids: set[str] = set()
+    for vf in var_dirs:
+        ids.update(f.stem for f in vf.iterdir() if f.is_file() and f.suffix.lower()==IMG_EXT)
+    MODEL_IMAGE_IDS[model] = ids
+
+# Global pool – intersection across all models (fallback)
+GLOBAL_IMAGE_IDS: list[str] = sorted(set.intersection(*MODEL_IMAGE_IDS.values()))
 
 app = Flask(__name__)
 
@@ -182,82 +203,81 @@ def variations_page():
 
 @app.route("/api/variations/next")
 def api_variations_next():
-    """Return JSON with a Claude image paired with a random variation image."""
-    img = random.choice(VAR_IMAGE_IDS)
-    token = str(int(time.time()*1000))
+    """Return JSON containing a pair of images – same image ID from two random models and variations."""
 
-    other_var = random.choice(VAR_FOLDERS)
+    # Pick two distinct models
+    model_left, model_right = random.sample(list(MODEL_VARIATIONS.keys()), 2)
 
-    # start with Claude left, other right then maybe flip
-    left_var_path, right_var_path = CLAUDE_FOLDER, other_var
+    # Determine common image IDs between the two models
+    common_ids = MODEL_IMAGE_IDS[model_left].intersection(MODEL_IMAGE_IDS[model_right])
+    if not common_ids:
+        # fall back to global intersection
+        if not GLOBAL_IMAGE_IDS:
+            return jsonify({"error":"no_common_images"}), 500
+        img_id = random.choice(GLOBAL_IMAGE_IDS)
+    else:
+        img_id = random.choice(list(common_ids))
 
+    token  = str(int(time.time()*1000))
+
+    # Randomly choose a variation folder for each model
+    var_left_path  = random.choice(MODEL_VARIATIONS[model_left])
+    var_right_path = random.choice(MODEL_VARIATIONS[model_right])
+
+    # Randomly swap sides
     if random.random() < 0.5:
-        left_var_path, right_var_path = right_var_path, left_var_path
+        model_left, model_right = model_right, model_left
+        var_left_path, var_right_path = var_right_path, var_left_path
 
     return jsonify({
-        "image_id": img,
-        "left_url":  f"/variation_images/{left_var_path.name}/{img}{IMG_EXT}?v={token}",
-        "right_url": f"/variation_images/{right_var_path.name}/{img}{IMG_EXT}?v={token}",
-        "left_variation":  left_var_path.name,
-        "right_variation": right_var_path.name
+        "image_id": img_id,
+        "left_url":  f"/variation_images/{model_left}/{var_left_path.name}/{img_id}{IMG_EXT}?v={token}",
+        "right_url": f"/variation_images/{model_right}/{var_right_path.name}/{img_id}{IMG_EXT}?v={token}",
+        "left_model":  model_left,
+        "left_variation": var_left_path.name,
+        "right_model": model_right,
+        "right_variation": var_right_path.name
     })
 
 @app.route("/api/variations/vote", methods=["POST"])
 def api_variations_vote():
-    """Persist a vote for the best variation (pair-wise)."""
+    """Persist a vote in new schema: image_id, left/right model+variation, winner key."""
     data = request.get_json(force=True)
 
-    user_name = request.cookies.get(COOKIE_NAME, "anonymous")
-    if USERAGENT_RX.match(user_name):
-        user_name = "anonymous"
+    # Basic fields from client
+    left_model       = data.get("left_model")
+    left_variation   = data.get("left_variation")
+    right_model      = data.get("right_model")
+    right_variation  = data.get("right_variation")
+    winner           = data.get("winner")  # expected values: left/right/both_good/both_bad/skip
 
-    # Determine winner & loser variations based on choice
-    choice = data.get("winner_choice")
-    left_var  = data.get("left_variation")
-    right_var = data.get("right_variation")
-    if choice == "left":
-        winner_var, loser_var = left_var, right_var
-    elif choice == "right":
-        winner_var, loser_var = right_var, left_var
-    elif choice in ("both_good", "both_bad"):
-        winner_var = loser_var = choice  # symmetrical outcome
-    else:  # skip or unknown
-        winner_var = loser_var = "skip"
+    if winner == "skip":
+        return {"status":"skipped"}
 
     record = {
-        "timestamp_iso": datetime.utcnow().isoformat(),
-        "user_name": user_name,
-        "client_id": request.cookies.get(COOKIE_ID, ""),
-        "image_id": data.get("image_id"),
-        "winner_variation": winner_var,
-        "loser_variation":  loser_var,
-        "left_variation":   left_var,
-        "right_variation":  right_var,
-        "winner_choice":    choice,
-        "decision_ms":      data.get("decision_ms"),
-        "orientation":      data.get("orientation", ""),
-        "resolution":       data.get("resolution", ""),
-        "remote_addr":      request.headers.get("X-Forwarded-For", request.remote_addr),
-        "user_agent":       request.headers.get("User-Agent", ""),
+        "image_id":          data.get("image_id"),
+        "left_model":        left_model,
+        "left_variation":    left_variation,
+        "right_model":       right_model,
+        "right_variation":   right_variation,
+        "winner":            winner
     }
 
-    # Skip votes are not persisted
-    if choice != "skip":
-        with FileLock(str(VAR_LOCK_PATH)):
-            with open(VAR_DATA_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with FileLock(str(VAR_LOCK_PATH)):
+        with open(VAR_DATA_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    return {"status": "ok"}
+    return {"status":"ok"}
 
-@app.route("/variation_images/<variation>/<path:filename>")
-def variation_images(variation: str, filename: str):
-    """Serve images from the external variation datasets."""
-    # Basic safety check – allow 'claude' plus variation_* folders
-    allowed = {p.name for p in VAR_FOLDERS}
-    allowed.add(CLAUDE_FOLDER.name)
-    if variation not in allowed:
-        return "Not found", 404
-    dir_path = VAR_IMAGE_ROOT / variation
+@app.route("/variation_images/<model>/<variation>/<path:filename>")
+def variation_images(model: str, variation: str, filename: str):
+    """Serve image file for given model/variation."""
+    # Safety checks
+    if model not in MODEL_VARIATIONS:
+        return "Model not found", 404
+    if variation not in {v.name for v in MODEL_VARIATIONS[model]}:
+        return "Variation not found", 404
+    dir_path = VAR_IMAGE_ROOT / model / variation
     return send_from_directory(dir_path, filename)
 
 @app.route('/favicon.ico')
